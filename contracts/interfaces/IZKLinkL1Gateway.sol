@@ -10,7 +10,8 @@ interface IZKLinkL1Gateway {
         uint8 subAccountId,
         bool _mapping,
         bytes _calldata,
-        uint256 nonce
+        uint256 nonce,
+        bytes32 messageHash
     );
 
     event DepositETH(

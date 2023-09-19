@@ -6,17 +6,19 @@ interface IZKLinkL2Gateway {
     event ClaimedDepositERC20(
         address token,
         uint104 amount,
-        bytes32 zklinkAddress,
+        bytes32 zkLinkAddress,
         uint8 subAccountId,
         bool _mapping,
-        uint256 nonce,
-        bytes _calldata
+        bool success,
+        bytes errorInfo
     );
 
     event ClaimedDepositETH(
         bytes32 zkLinkAddress,
         uint8 subAccountId,
-        uint104 amount
+        uint104 amount,
+        bool success,
+        bytes erroInfo
     );
     event SetBridge(address token, address bridge);
     event SetRemoteBridge(address token, address remoteBridge);
@@ -26,15 +28,15 @@ interface IZKLinkL2Gateway {
     error InvalidValue();
     error InvalidParmas();
     error NoRemoteTokenSet();
+    error UnknowMessage();
+    error CanNotClaimTwice();
 
     function claimDepositERC20(
         address token,
-        uint104 amount,
-        bytes32 zkLinkAddress,
-        uint8 subAccountId,
-        bool _mapping,
         bytes calldata _calldata,
-        uint256 nonce
+        uint256 nonce,
+        bytes calldata cbCalldata,
+        uint256 cbNonce
     ) external;
 
     function claimDepositETH(
@@ -42,4 +44,13 @@ interface IZKLinkL2Gateway {
         uint8 subAccountId,
         uint104 amount
     ) external payable;
+
+    function claimDepositERC20Callback(
+        address token,
+        uint104 amount,
+        bytes32 zkLinkAddress,
+        uint8 subAccountId,
+        bool _mapping,
+        bytes32 messageHash
+    ) external;
 }

@@ -35,7 +35,7 @@ contract ZKLinkL1Gateway is
     // Mapping L1 token address to L2 token address
     mapping(address => address) remoteTokens;
 
-    uint256[48] private __gap;
+    uint256[49] private __gap;
 
     function initialize() public initializer {
         __Ownable_init();
@@ -86,19 +86,29 @@ contract ZKLinkL1Gateway is
             ILineaERC20Bridge.receiveFromOtherLayer,
             (remoteGateway, _amount)
         );
+        bytes32 messageHash = keccak256(
+            abi.encode(
+                bridges[_token],
+                remoteBridge[_token],
+                0,
+                0,
+                nonce,
+                _calldata
+            )
+        );
+
         ILineaERC20Bridge(bridges[_token]).depositTo(_amount, remoteGateway);
 
         // sendClaimERC20 message
         bytes memory verifyCalldata = abi.encodeCall(
-            IZKLinkL2Gateway.claimDepositERC20,
+            IZKLinkL2Gateway.claimDepositERC20Callback,
             (
                 remoteTokens[_token],
                 _amount,
                 _zkLinkAddress,
                 _subAccountId,
                 _mapping,
-                _calldata,
-                nonce
+                messageHash
             )
         );
         messageService.sendMessage(remoteGateway, 0, verifyCalldata);
@@ -109,7 +119,8 @@ contract ZKLinkL1Gateway is
             _subAccountId,
             _mapping,
             _calldata,
-            nonce
+            nonce,
+            messageHash
         );
     }
 

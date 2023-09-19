@@ -5,6 +5,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/structs/BitMapsUpgradeable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IZKLinkL2Gateway} from "../interfaces/IZKLinkL2Gateway.sol";
 import {IMessageService} from "../interfaces/IMessageService.sol";
 import {IZkLink} from "../interfaces/IZkLink.sol";
@@ -14,15 +15,21 @@ contract ZKLinkL2Gateway is
     UUPSUpgradeable,
     IZKLinkL2Gateway
 {
+    uint8 public constant INBOX_STATUS_UNKNOWN = 0;
+    uint8 public constant INBOX_STATUS_RECEIVED = 1;
+    uint8 public constant INBOX_STATUS_CLAIMED = 2;
+
     // Claim fee recipient
     address payable public feeRecipient;
+
     // message service address
     IMessageService public messageService;
 
     // Remote Gateway address
     address public remoteGateway;
 
-    IZkLink public zklinkContract;
+    address public zklinkContract;
+
     // Mapping from token to token bridge
     mapping(address => address) bridges;
 
@@ -31,12 +38,12 @@ contract ZKLinkL2Gateway is
 
     // Mapping L1 token address to L2 token address
     mapping(address => address) remoteTokens;
+    // Mapping from messageHash to bool
+    mapping(bytes32 => bool) messageHashUsed;
+
+    bytes32 public messageHash;
 
     uint256[49] internal __gap;
-
-    modifier onlyRelayer() {
-        _;
-    }
 
     modifier onlyMessageService() {
         if (msg.sender != address(messageService)) {
@@ -56,29 +63,106 @@ contract ZKLinkL2Gateway is
 
     function claimDepositERC20(
         address _token,
+        bytes calldata _calldata,
+        uint256 _nonce,
+        bytes calldata _cbCalldata,
+        uint256 _cbNonce
+    ) external override {
+        messageHash = keccak256(
+            abi.encode(
+                remoteBridge[_token],
+                bridges[_token],
+                0,
+                0,
+                _nonce,
+                _calldata
+            )
+        );
+
+        uint256 status = messageService.inboxL1L2MessageStatus(messageHash);
+        if (status == INBOX_STATUS_UNKNOWN) {
+            revert UnknowMessage();
+        }
+
+        // if status == INBOX_STATUS_CLAIMED means someone else claimed erc20 token directly
+        if (status == INBOX_STATUS_CLAIMED && messageHashUsed[messageHash]) {
+            revert CanNotClaimTwice();
+        }
+
+        if (status == INBOX_STATUS_RECEIVED) {
+            // claim erc20 token
+            (bool success, bytes memory errorInfo) = address(messageService)
+                .call(
+                    abi.encodeCall(
+                        IMessageService.claimMessage,
+                        (
+                            remoteBridge[_token],
+                            bridges[_token],
+                            0,
+                            0,
+                            feeRecipient,
+                            _calldata,
+                            _nonce
+                        )
+                    )
+                );
+
+            require(success, string(errorInfo));
+        }
+
+        // claim callback message to verify messages
+        messageService.claimMessage(
+            remoteGateway,
+            address(this),
+            0,
+            0,
+            feeRecipient,
+            _cbCalldata,
+            _cbNonce
+        );
+    }
+
+    function claimDepositERC20Callback(
+        address _token,
         uint104 _amount,
         bytes32 _zkLinkAddress,
         uint8 _subAccountId,
         bool _mapping,
-        bytes calldata _calldata,
-        uint256 nonce
-    ) external override onlyMessageService {
-        messageService.claimMessage(
-            remoteBridge[_token],
-            bridges[_token],
-            0,
-            0,
-            feeRecipient,
-            _calldata,
-            nonce
+        bytes32 _messageHash
+    ) external override {
+        if (messageHash != _messageHash) {
+            revert InvalidParmas();
+        }
+
+        // approve token to zklink
+        IERC20Upgradeable(_token).approve(zklinkContract, _amount);
+
+        // deposit erc20 to zklink
+        (bool success, bytes memory errorInfo) = zklinkContract.call(
+            abi.encodeCall(
+                IZkLink.depositERC20,
+                (
+                    IERC20(_token),
+                    _amount,
+                    _zkLinkAddress,
+                    _subAccountId,
+                    _mapping
+                )
+            )
         );
-        IERC20Upgradeable(_token).approve(address(zklinkContract), _amount);
-        zklinkContract.depositERC20(
-            IERC20Upgradeable(_token),
+
+        if (success) {
+            messageHashUsed[messageHash] = true;
+        }
+
+        emit ClaimedDepositERC20(
+            _token,
             _amount,
             _zkLinkAddress,
             _subAccountId,
-            _mapping
+            _mapping,
+            success,
+            errorInfo
         );
     }
 
@@ -90,12 +174,17 @@ contract ZKLinkL2Gateway is
         if (msg.value != amount) {
             revert InvalidValue();
         }
-        zklinkContract.depositETH{value: msg.value}(
-            zkLinkAddress,
-            subAccountId
-        );
+        (bool success, bytes memory errorInfo) = zklinkContract.call{
+            value: msg.value
+        }(abi.encodeCall(IZkLink.depositETH, (zkLinkAddress, subAccountId)));
 
-        emit ClaimedDepositETH(zkLinkAddress, subAccountId, amount);
+        emit ClaimedDepositETH(
+            zkLinkAddress,
+            subAccountId,
+            amount,
+            success,
+            errorInfo
+        );
     }
 
     function setBridges(
@@ -160,7 +249,14 @@ contract ZKLinkL2Gateway is
         if (_zklinkContract == address(0)) {
             revert InvalidParmas();
         }
-        zklinkContract = IZkLink(_zklinkContract);
+        zklinkContract = _zklinkContract;
+    }
+
+    function setFeeRecipient(address _feeRecipient) external onlyOwner {
+        if (_feeRecipient == address(0)) {
+            revert InvalidParmas();
+        }
+        feeRecipient = payable(_feeRecipient);
     }
 
     function getBridge(address token) external view returns (address) {

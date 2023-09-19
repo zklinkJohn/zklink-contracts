@@ -2,7 +2,7 @@
 
 pragma solidity ^0.8.0;
 
-import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @title ZkLink interface contract
 /// @author zk.link
@@ -33,7 +33,7 @@ interface IZkLink {
     ) external;
 
     function depositERC20(
-        IERC20Upgradeable _token,
+        IERC20 _token,
         uint104 _amount,
         bytes32 _zkLinkAddress,
         uint8 _subAccountId,
