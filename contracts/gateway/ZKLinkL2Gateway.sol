@@ -10,11 +10,7 @@ import {IZKLinkL2Gateway} from "../interfaces/IZKLinkL2Gateway.sol";
 import {IMessageService} from "../interfaces/IMessageService.sol";
 import {IZkLink} from "../interfaces/IZkLink.sol";
 
-contract ZKLinkL2Gateway is
-    OwnableUpgradeable,
-    UUPSUpgradeable,
-    IZKLinkL2Gateway
-{
+contract ZKLinkL2Gateway is OwnableUpgradeable, UUPSUpgradeable, IZKLinkL2Gateway {
     uint8 public constant INBOX_STATUS_UNKNOWN = 0;
     uint8 public constant INBOX_STATUS_RECEIVED = 1;
     uint8 public constant INBOX_STATUS_CLAIMED = 2;
@@ -57,9 +53,7 @@ contract ZKLinkL2Gateway is
         __UUPSUpgradeable_init();
     }
 
-    function _authorizeUpgrade(
-        address newImplementation
-    ) internal override onlyOwner {}
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
     function claimDepositERC20(
         address _token,
@@ -69,14 +63,7 @@ contract ZKLinkL2Gateway is
         uint256 _cbNonce
     ) external override {
         messageHash = keccak256(
-            abi.encode(
-                remoteBridge[_token],
-                bridges[_token],
-                0,
-                0,
-                _nonce,
-                _calldata
-            )
+            abi.encode(remoteBridge[_token], bridges[_token], 0, 0, _nonce, _calldata)
         );
 
         uint256 status = messageService.inboxL1L2MessageStatus(messageHash);
@@ -91,21 +78,12 @@ contract ZKLinkL2Gateway is
 
         if (status == INBOX_STATUS_RECEIVED) {
             // claim erc20 token
-            (bool success, bytes memory errorInfo) = address(messageService)
-                .call(
-                    abi.encodeCall(
-                        IMessageService.claimMessage,
-                        (
-                            remoteBridge[_token],
-                            bridges[_token],
-                            0,
-                            0,
-                            feeRecipient,
-                            _calldata,
-                            _nonce
-                        )
-                    )
-                );
+            (bool success, bytes memory errorInfo) = address(messageService).call(
+                abi.encodeCall(
+                    IMessageService.claimMessage,
+                    (remoteBridge[_token], bridges[_token], 0, 0, feeRecipient, _calldata, _nonce)
+                )
+            );
 
             require(success, string(errorInfo));
         }
@@ -129,7 +107,7 @@ contract ZKLinkL2Gateway is
         uint8 _subAccountId,
         bool _mapping,
         bytes32 _messageHash
-    ) external override {
+    ) external override onlyMessageService {
         if (messageHash != _messageHash) {
             revert InvalidParmas();
         }
@@ -141,19 +119,16 @@ contract ZKLinkL2Gateway is
         (bool success, bytes memory errorInfo) = zklinkContract.call(
             abi.encodeCall(
                 IZkLink.depositERC20,
-                (
-                    IERC20(_token),
-                    _amount,
-                    _zkLinkAddress,
-                    _subAccountId,
-                    _mapping
-                )
+                (IERC20(_token), _amount, _zkLinkAddress, _subAccountId, _mapping)
             )
         );
 
         if (success) {
             messageHashUsed[messageHash] = true;
         }
+
+        // reset messageHash
+        messageHash = bytes32(0);
 
         emit ClaimedDepositERC20(
             _token,
@@ -174,17 +149,11 @@ contract ZKLinkL2Gateway is
         if (msg.value != amount) {
             revert InvalidValue();
         }
-        (bool success, bytes memory errorInfo) = zklinkContract.call{
-            value: msg.value
-        }(abi.encodeCall(IZkLink.depositETH, (zkLinkAddress, subAccountId)));
-
-        emit ClaimedDepositETH(
-            zkLinkAddress,
-            subAccountId,
-            amount,
-            success,
-            errorInfo
+        (bool success, bytes memory errorInfo) = zklinkContract.call{value: msg.value}(
+            abi.encodeCall(IZkLink.depositETH, (zkLinkAddress, subAccountId))
         );
+
+        emit ClaimedDepositETH(zkLinkAddress, subAccountId, amount, success, errorInfo);
     }
 
     function setBridges(
